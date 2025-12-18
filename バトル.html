@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>タップ格闘ゲーム Ver.2</title>
+    <style>
+        /* --- 基本設定 --- */
+        body {
+            font-family: sans-serif;
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column;
+            height: 100vh;
+            background-color: #222; /* 背景色：暗いグレー */
+            color: white;
+            overflow: hidden; /* スクロール防止 */
+            touch-action: manipulation;
+        }
+
+        /* --- 体力ゲージエリア --- */
+        .hud {
+            display: flex; justify-content: space-between; padding: 15px; background: #333;
+        }
+        .hp-container { width: 45%; font-weight: bold; }
+        .hp-bar-bg {
+            width: 100%; height: 20px; background: #555; border: 3px solid #444; border-radius: 4px; overflow: hidden;
+        }
+        .hp-bar { height: 100%; transition: width 0.2s ease-out; }
+        #hp-p1 { background: linear-gradient(to right, #00c6ff, #0072ff); width: 100%; }
+        #hp-p2 { background: linear-gradient(to right, #ff4b1f, #ff9068); width: 100%; }
+
+        /* --- キャラクター表示エリア (ステージ) --- */
+        .stage {
+            flex-grow: 1;
+            display: flex; justify-content: space-around; align-items: flex-end; /* 足元を揃える */
+            padding-bottom: 50px;
+            position: relative;
+            background: #2a2a2a; /* 地面の色 */
+            box-shadow: inset 0 -10px 20px rgba(0,0,0,0.5);
+        }
+
+        /* キャラクターの基本スタイル */
+        .fighter {
+            width: 100px; height: 150px;
+            border-radius: 15px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-size: 50px; /* 絵文字のサイズ */
+            position: relative;
+            transition: all 0.1s; /* アニメーションの滑らかさ */
+            border: 5px solid rgba(0,0,0,0.2);
+        }
+        .p1-base { background: #0072ff; color: white; }
+        .p2-base { background: #ff4b1f; color: white; }
+        .fighter .name { font-size: 16px; position: absolute; top: -25px; font-weight: bold;}
+
+        /* --- アニメーションと状態変化 (ポーズ) --- */
+
+        /* 攻撃時：少し前に出る */
+        .pose-attack.p1-base { transform: translateX(30px); }
+        .pose-attack.p2-base { transform: translateX(-30px); }
+
+        /* ダメージ時：色が明るくなり、揺れるアニメーションが追加される */
+        .pose-hurt { filter: brightness(1.5); }
+        .shake { animation: shakeAnim 0.3s linear; }
+
+        @keyframes shakeAnim {
+            0% { transform: translate(0, 0); }
+            20% { transform: translate(-10px, 0) rotate(-2deg); }
+            40% { transform: translate(10px, 0) rotate(2deg); }
+            60% { transform: translate(-10px, 0) rotate(-2deg); }
+            80% { transform: translate(10px, 0) rotate(2deg); }
+            100% { transform: translate(0, 0); }
+        }
+        
+        /* 敗北時：倒れて色が暗くなる */
+        .pose-lose {
+            transform: rotate(90deg) translate(40px, 0);
+            filter: grayscale(100%) brightness(0.5);
+            transition: transform 0.5s ease-in;
+        }
+        /* 勝利時：少し跳ねる */
+        .pose-win {
+            transform: translateY(-30px);
+            box-shadow: 0 20px 10px rgba(0,0,0,0.3);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* バウンドする動き */
+        }
+
+
+        /* --- 操作パネルエリア --- */
+        .controls {
+            height: 35%; display: flex; border-top: 3px solid #444;
+        }
+        .control-pad {
+            width: 50%; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            gap: 12px; padding: 10px;
+        }
+        .p1-pad { background: #002244; }
+        .p2-pad { background: #441100; }
+
+        button {
+            width: 95%; padding: 18px; font-size: 20px; border: none; border-radius: 12px;
+            font-weight: bold; cursor: pointer; position: relative;
+            box-shadow: 0 6px 0 rgba(0,0,0,0.4); /* 立体感 */
+            transition: all 0.05s;
+        }
+        button:active {
+            top: 6px; box-shadow: 0 0 0 rgba(0,0,0,0.4); /* 押したときの沈み込み */
+        }
+
+        .btn-punch { background: linear-gradient(to bottom, #ffeb3b, #fbc02d); color: black; }
+        .btn-kick { background: linear-gradient(to bottom, #ff5722, #e64a19); color: white; }
+        
+        /* リセットボタン */
+        #reset-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: none;
+            justify-content: center; align-items: center; flex-direction: column; z-index: 100;
+        }
+        #win-message { font-size: 40px; color: yellow; margin-bottom: 30px; font-weight: bold; text-shadow: 2px 2px 4px black; }
+        #reset-btn { padding: 20px 50px; font-size: 24px; background: white; color: black; width: auto; }
+    </style>
+</head>
+<body>
+
+    <div class="hud">
+        <div class="hp-container">
+            <div>PLAYER 1</div>
+            <div class="hp-bar-bg"><div id="hp-p1" class="hp-bar"></div></div>
+        </div>
+        <div class="hp-container" style="text-align: right;">
+            <div>PLAYER 2</div>
+            <div class="hp-bar-bg"><div id="hp-p2" class="hp-bar" style="float: right;"></div></div>
+        </div>
+    </div>
+
+    <div class="stage">
+        <div id="char-p1" class="fighter p1-base">
+            <div class="name">P1</div>
+            <span class="face">😐</span>
+        </div>
+        <div id="char-p2" class="fighter p2-base">
+            <div class="name">P2</div>
+            <span class="face">😐</span>
+        </div>
+    </div>
+
+    <div class="controls">
+        <div class="control-pad p1-pad">
+            <button class="btn-punch" onclick="handleAction(1, 'punch')">👊 パンチ (小)</button>
+            <button class="btn-kick" onclick="handleAction(1, 'kick')">🦶 キック (大)</button>
+        </div>
+        <div class="control-pad p2-pad">
+            <button class="btn-punch" onclick="handleAction(2, 'punch')">👊 パンチ (小)</button>
+            <button class="btn-kick" onclick="handleAction(2, 'kick')">🦶 キック (大)</button>
+        </div>
+    </div>
+
+    <div id="reset-overlay">
+        <div id="win-message">P1 WINS!</div>
+        <button id="reset-btn" onclick="resetGame()">もう一度戦う</button>
+    </div>
+
+    <script>
+        // === ゲーム設定 ===
+        const MAX_HP = 100;
+        const DAMAGE_PUNCH = 17; // 6発でKO
+        const DAMAGE_KICK = 25;  // 4発でKO
+
+        // === ゲーム状態 ===
+        let gameState = {
+            hp1: MAX_HP,
+            hp2: MAX_HP,
+            isGameOver: false
+        };
+
+        // アニメーション管理用タイマー（連打したときに前の動きをキャンセルするため）
+        let p1AnimTimeout, p2AnimTimeout;
+
+        // === アクション処理 (メインループ) ===
+        function handleAction(attackerId, type) {
+            if (gameState.isGameOver) return;
+
+            const targetId = (attackerId === 1) ? 2 : 1;
+            const damage = (type === 'punch') ? DAMAGE_PUNCH : DAMAGE_KICK;
+
+            // 1. ダメージ計算
+            if (targetId === 1) {
+                gameState.hp1 = Math.max(0, gameState.hp1 - damage);
+            } else {
+                gameState.hp2 = Math.max(0, gameState.hp2 - damage);
+            }
+
+            // 2. 画面更新（HPバー）
+            updateHpUI();
+
+            // 3. 勝敗判定
+            if (gameState.hp1 <= 0 || gameState.hp2 <= 0) {
+                endGame(attackerId);
+            } else {
+                // 勝負がついていなければ、攻撃とダメージのアニメーション再生
+                playAttackAnimations(attackerId, targetId);
+            }
+        }
+
+        // === アニメーション制御関数 ===
+        
+        // キャラクターの見た目（ポーズと顔）を変更する関数
+        function setCharacterPose(playerId, poseType) {
+            const charEl = document.getElementById(`char-p${playerId}`);
+            const faceEl = charEl.querySelector('.face');
+            
+            // いったん全てのポーズクラスを削除
+            charEl.classList.remove('pose-idle', 'pose-attack', 'pose-hurt', 'pose-win', 'pose-lose');
+            // 指定されたポーズクラスを追加
+            charEl.classList.add(`pose-${poseType}`);
+
+            // ポーズに応じて絵文字を変更
+            let emoji = '😐';
+            switch(poseType) {
+                case 'idle': emoji = '😐'; break;
+                case 'attack': emoji = '😠'; break;
+                case 'hurt': emoji = '😵'; break;
+                case 'win': emoji = '😎'; break;
+                case 'lose': emoji = '💀'; break;
+            }
+            faceEl.textContent = emoji;
+        }
+
+        // 攻撃時のアニメーションシーケンス
+        function playAttackAnimations(attackerId, targetId) {
+            const targetEl = document.getElementById(`char-p${targetId}`);
+            
+            // 前のアニメーションタイマーをクリア
+            clearTimeout(attackerId === 1 ? p1AnimTimeout : p2AnimTimeout);
+            clearTimeout(targetId === 1 ? p1AnimTimeout : p2AnimTimeout);
+
+            // --- 攻撃側の動き ---
+            setCharacterPose(attackerId, 'attack');
+            // 少し経ったら元の姿勢に戻すタイマーをセット
+            const attackerTimer = setTimeout(() => {
+                if(!gameState.isGameOver) setCharacterPose(attackerId, 'idle');
+            }, 200); // 0.2秒後に戻る
+
+            // --- 防御側の動き ---
+            setCharacterPose(targetId, 'hurt');
+            // 揺れるアニメーションCSSクラスを付与して、すぐ外す（再生させるため）
+            targetEl.classList.remove('shake');
+            void targetEl.offsetWidth; // ブラウザに再描画を強制するハック
+            targetEl.classList.add('shake');
+
+            // 少し経ったら元の姿勢に戻すタイマーをセット
+            const targetTimer = setTimeout(() => {
+                 targetEl.classList.remove('shake');
+                 if(!gameState.isGameOver) setCharacterPose(targetId, 'idle');
+            }, 500); // 0.5秒後に戻る
+            
+            // タイマーIDを保存（連打対策）
+            if (attackerId === 1) p1AnimTimeout = attackerTimer; else p2AnimTimeout = attackerTimer;
+            if (targetId === 1) p1AnimTimeout = targetTimer; else p2AnimTimeout = targetTimer;
+        }
+
+
+        // === UI更新・ゲーム進行管理 ===
+        
+        function updateHpUI() {
+            const p1Percent = (gameState.hp1 / MAX_HP) * 100;
+            const p2Percent = (gameState.hp2 / MAX_HP) * 100;
+            document.getElementById('hp-p1').style.width = `${p1Percent}%`;
+            document.getElementById('hp-p2').style.width = `${p2Percent}%`;
+        }
+
+        function endGame(winnerId) {
+            gameState.isGameOver = true;
+            const loserId = (winnerId === 1) ? 2 : 1;
+
+            // 最後のポーズをセット（勝利と敗北）
+            setCharacterPose(winnerId, 'win');
+            setCharacterPose(loserId, 'lose');
+            // 揺れを止める
+            document.getElementById(`char-p1`).classList.remove('shake');
+            document.getElementById(`char-p2`).classList.remove('shake');
+
+            // 結果画面表示
+            setTimeout(() => {
+                document.getElementById('win-message').textContent = `P${winnerId} WINS!`;
+                document.getElementById('reset-overlay').style.display = 'flex';
+            }, 800);
+        }
+
+        function resetGame() {
+            gameState.hp1 = MAX_HP;
+            gameState.hp2 = MAX_HP;
+            gameState.isGameOver = false;
+            
+            updateHpUI();
+            // ポーズを初期状態に戻す
+            setCharacterPose(1, 'idle');
+            setCharacterPose(2, 'idle');
+            
+            document.getElementById('reset-overlay').style.display = 'none';
+        }
+
+        // 初期化実行
+        setCharacterPose(1, 'idle');
+        setCharacterPose(2, 'idle');
+
+    </script>
+</body>
+</html>
